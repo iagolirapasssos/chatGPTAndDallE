@@ -44,6 +44,8 @@ import com.bosonshiggs.chatgpt.helpers.ImageSize;
 import com.bosonshiggs.chatgpt.helpers.VoiceModel;
 import com.bosonshiggs.chatgpt.helpers.AudioQuality;
 import com.bosonshiggs.chatgpt.helpers.AudioFormats;
+import com.bosonshiggs.chatgpt.helpers.VisionModel;
+import com.bosonshiggs.chatgpt.helpers.DetailParameter;
 
 import android.os.Environment;
 import android.media.MediaScannerConnection;
@@ -71,11 +73,11 @@ import android.widget.SeekBar;
 import android.os.Handler;
 
 
-@DesignerComponent(version = 6, // Update version here, You must do for each new release to upgrade your extension
+@DesignerComponent(version = 8, // Update version here, You must do for each new release to upgrade your extension
 description = "Extension to use Openai's API",
 category = ComponentCategory.EXTENSION,
 nonVisible = true,
-iconName = "images/extension.png") // Change your extension's icon from here; can be a direct url
+iconName = "https://static.vecteezy.com/system/resources/previews/024/558/811/non_2x/openai-chatgpt-logo-icon-free-png.png")
 
 
 @SimpleObject(external = true)
@@ -318,6 +320,186 @@ public class ChatGPT extends AndroidNonvisibleComponent {
             }
         }).start();
     }
+
+    @SimpleFunction(description = "Upload a JSONL file for fine-tuning")
+    public void UploadTrainingFile(final String apiKey, final String filePath) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // Define a URL do endpoint da API para upload de arquivos
+                    URL url = new URL("https://api.openai.com/v1/files");
+
+                    // Abre uma conexão com a URL
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+
+                    // Define o método da requisição como POST
+                    connection.setRequestMethod("POST");
+
+                    // Define os cabeçalhos da requisição
+                    connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+                    connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=boundary");
+
+                    // Prepara o arquivo para envio
+                    File file = new File(filePath);
+                    FileInputStream fileInputStream = new FileInputStream(file);
+
+                    // Monta o corpo da requisição (payload)
+                    String boundary = "boundary";
+                    String lineEnd = "\r\n";
+                    String twoHyphens = "--";
+
+                    StringBuilder requestBody = new StringBuilder();
+                    requestBody.append(twoHyphens).append(boundary).append(lineEnd);
+                    requestBody.append("Content-Disposition: form-data; name=\"file\"; filename=\"").append(file.getName()).append("\"").append(lineEnd);
+                    requestBody.append("Content-Type: application/jsonl").append(lineEnd);
+                    requestBody.append(lineEnd);
+
+                    // Escreve o corpo da requisição
+                    connection.setDoOutput(true);
+                    OutputStream os = connection.getOutputStream();
+                    os.write(requestBody.toString().getBytes());
+
+                    // Lê o arquivo e escreve no output stream
+                    byte[] buffer = new byte[4096];
+                    int bytesRead;
+                    while ((bytesRead = fileInputStream.read(buffer)) != -1) {
+                        os.write(buffer, 0, bytesRead);
+                    }
+
+                    // Termina o payload
+                    os.write(lineEnd.getBytes());
+                    os.write((twoHyphens + boundary + twoHyphens + lineEnd).getBytes());
+
+                    // Fecha o stream do arquivo
+                    fileInputStream.close();
+                    os.flush();
+                    os.close();
+
+                    // Obtém o código de resposta HTTP
+                    int responseCode = connection.getResponseCode();
+
+                    // Lê a resposta do servidor
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "utf-8"));
+                        StringBuilder response = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            response.append(line.trim());
+                        }
+                        reader.close();
+                        FileUploaded(response.toString());
+                    } else {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getErrorStream(), "utf-8"));
+                        StringBuilder errorResponse = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            errorResponse.append(line.trim());
+                        }
+                        reader.close();
+                        ReportError("Error uploading file: " + errorResponse.toString());
+                    }
+                } catch (Exception e) {
+                    ReportError("Error: " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    @SimpleFunction(description = "Start a fine-tuning job with a given training file")
+    public void StartFineTuningJob(final String apiKey, final String trainingFileId, final String model, final String suffix) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // Define a URL do endpoint da API
+                    URL url = new URL("https://api.openai.com/v1/fine_tuning/jobs");
+
+                    // Abre uma conexão com a URL
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+
+                    // Define o método da requisição como POST
+                    connection.setRequestMethod("POST");
+
+                    // Define os cabeçalhos da requisição
+                    connection.setRequestProperty("Content-Type", "application/json");
+                    connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+
+                    // Monta o payload para o fine-tuning
+                    String payload = "{\n" +
+                            "  \"model\": \"" + model + "\",\n" +
+                            "  \"training_file\": \"" + trainingFileId + "\",\n" +
+                            "  \"suffix\": \"" + suffix + "\"\n" +
+                            "}";
+
+                    // Habilita streams de input/output
+                    connection.setDoOutput(true);
+
+                    // Escreve o payload no corpo da requisição
+                    try (OutputStream os = connection.getOutputStream()) {
+                        byte[] input = payload.getBytes("utf-8");
+                        os.write(input, 0, input.length);
+                    }
+
+                    // Obtém o código de resposta HTTP
+                    int responseCode = connection.getResponseCode();
+
+                    // Lê a resposta do servidor
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "utf-8"))) {
+                            StringBuilder response = new StringBuilder();
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                response.append(line.trim());
+                            }
+                            FineTuningJobStarted(response.toString());
+                        }
+                    } else {
+                        // Lê a mensagem de erro do servidor
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getErrorStream(), "utf-8"))) {
+                            StringBuilder errorResponse = new StringBuilder();
+                            String errorLine;
+                            while ((errorLine = reader.readLine()) != null) {
+                                errorResponse.append(errorLine.trim());
+                            }
+                            ReportError("Error starting fine-tuning job: " + errorResponse.toString());
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    ReportError("Error: " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    // Evento para notificar que o job de fine-tuning foi iniciado
+    @SimpleEvent(description = "Fine-tuning job started")
+    public void FineTuningJobStarted(final String response) {
+        if (form != null) {
+            form.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    EventDispatcher.dispatchEvent(ChatGPT.this, "FineTuningJobStarted", response);
+                }
+            });
+        }
+    }
+
+
+    // Evento para notificar que o arquivo foi carregado
+    @SimpleEvent(description = "File uploaded successfully")
+    public void FileUploaded(final String response) {
+        if (form != null) {
+            form.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    EventDispatcher.dispatchEvent(ChatGPT.this, "FileUploaded", response);
+                }
+            });
+        }
+    }
+
     
     /*
      * AUXILIAR METHODS
@@ -584,6 +766,92 @@ public class ChatGPT extends AndroidNonvisibleComponent {
                 sendSpeechRequest(prompt, model, voice, apiKey, audioName, directoryName, outputFormat);
             }
         }).start();
+    }
+
+    /*
+     * Image vision
+     */
+    @SimpleFunction(description = "Send a vision request to GPT model with URL or base64 image")
+    public void SendVisionRequest(final int maxTokens, final String text, @Options(VisionModel.class) final String gptModel, final String imageData, @Options(DetailParameter.class) final String detail, final String apiKey) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    URL url = new URL("https://api.openai.com/v1/chat/completions");
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    connection.setRequestMethod("POST");
+                    connection.setRequestProperty("Content-Type", "application/json");
+                    connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+
+                    String imageContent;
+                    imageContent = "\"url\": \"" + imageData + "\", \"detail\": \"" + detail + "\"";
+
+                    String payload = "{\n" +
+                            "    \"model\": \"" + gptModel + "\",\n" +
+                            "    \"messages\": [\n" +
+                            "      {\n" +
+                            "        \"role\": \"user\",\n" +
+                            "        \"content\": [\n" +
+                            "          {\n" +
+                            "            \"type\": \"text\",\n" +
+                            "            \"text\": \"" + text + "\"\n" +
+                            "          },\n" +
+                            "          {\n" +
+                            "            \"type\": \"image_url\",\n" +
+                            "            \"image_url\": {\n" +
+                            "              " + imageContent + "\n" +
+                            "            }\n" +
+                            "          }\n" +
+                            "        ]\n" +
+                            "      }\n" +
+                            "    ],\n" +
+                            "    \"max_tokens\": " + maxTokens + "\n" +
+                            "}";
+
+                    connection.setDoOutput(true);
+                    try (OutputStream os = connection.getOutputStream()) {
+                        byte[] input = payload.getBytes("utf-8");
+                        os.write(input, 0, input.length);
+                    }
+
+                    int responseCode = connection.getResponseCode();
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        try (BufferedReader br = new BufferedReader(new InputStreamReader(connection.getInputStream(), "utf-8"))) {
+                            StringBuilder response = new StringBuilder();
+                            String responseLine;
+                            while ((responseLine = br.readLine()) != null) {
+                                response.append(responseLine.trim());
+                            }
+                            VisionResponseReceived(response.toString());
+                        }
+                    } else {
+                        // Leia a mensagem de erro do servidor
+                        try (BufferedReader br = new BufferedReader(new InputStreamReader(connection.getErrorStream(), "utf-8"))) {
+                            StringBuilder errorResponse = new StringBuilder();
+                            String errorLine;
+                            while ((errorLine = br.readLine()) != null) {
+                                errorResponse.append(errorLine.trim());
+                            }
+                            ReportError("HTTP error code: " + responseCode + ", Error message: " + errorResponse.toString());
+                        }
+                    }
+                } catch (Exception e) {
+                    ReportError("Error: " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    @SimpleEvent(description = "Received a response from the vision request")
+    public void VisionResponseReceived(final String response) {
+        if (form != null) {
+            form.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    EventDispatcher.dispatchEvent(ChatGPT.this, "VisionResponseReceived", response);
+                }
+            });
+        }
     }
     
     /*

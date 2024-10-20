@@ -7,6 +7,7 @@ import java.util.Map;
 public enum ImageSize implements OptionList<String> {
     SIZE_1024x1024("1024x1024"),
     SIZE_1024x1792("1024x1792"),
+    SIZE_720x1280("720x1280"),
     SIZE_1792x1024("1792x1024");
 
     private String size;
